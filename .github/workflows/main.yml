@@ -1,0 +1,94 @@
+name: Ruby
+
+on: [push,pull_request]
+
+jobs:
+  build_test:
+    if: "!contains(github.ref, 'refs/tags/') && !contains(github.event.head_commit.message, 'BUMP VERSION')"
+    name: Build + Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ruby-version: [3.0.x]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Setup Bundler 2.x
+      run: echo "BUNDLER_VERSION=2.2.20" >> $GITHUB_ENV
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ matrix.ruby }}
+        bundler-cache: true
+        bundler: ${{ env.BUNDLER_VERSION || 'latest' }}
+    - name: Cache gems
+      uses: actions/cache@v1
+      with:
+        path: vendor/bundle
+        key: ${{ runner.os }}-rubocop-${{ hashFiles('**/Gemfile.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-rubocop-
+    - name: Install gems
+      run: |
+        bundle config path vendor/bundle
+        bundle install --jobs 4 --retry 3
+    - name: Run RuboCop
+      run: bundle exec rubocop --parallel
+    - name: Run Rspec
+      run:  bundle exec rake spec
+  release:
+    needs: [build_test]
+    if: github.ref == 'refs/heads/master' && !contains(github.ref, 'refs/tags/') && !contains(github.event.head_commit.message, 'BUMP VERSION')
+    name: Build + Publish
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          token: "${{ secrets.RELEASE_TOKEN }}"
+      - name: Set up Ruby 2.5.0
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 2.5.0
+      - run: bundle install
+      - name: Build Gemspec
+        run: |
+          gem build *.gemspec
+      - name: Setup Git Info
+        run: |
+          git config --global user.email "developers@siliconjungles.com"
+          git config --global user.name "Silicon Avengers"
+      - name: Bump Gem Patch Version
+        if: contains(github.event.head_commit.message, 'PATCH')
+        run: |
+          bump patch --commit-message "<- BUMP VERSION"
+      - name: Bump Gem Minor Version
+        if: contains(github.event.head_commit.message, 'MINOR')
+        run: |
+          bump minor --commit-message "<- BUMP VERSION"
+      - name: Bump Gem Major Version
+        if: contains(github.event.head_commit.message, 'MAJOR')
+        run: |
+          bump major --commit-message "<- BUMP VERSION"
+      - name: Default To Bump Gem Patch Version
+        if: "!contains(github.event.head_commit.message, 'PATCH') && !contains(github.event.head_commit.message, 'MINOR') && !contains(github.event.head_commit.message, 'MAJOR')"
+        run: |
+          bump patch --commit-message "<- BUMP VERSION"
+      - name: Check Git
+        run: |
+          git remote -v
+          git push "https://${{ secrets.RELEASE_TOKEN }}@github.com/${{ github.repository }}.git"
+          git tag -a "v$(bump current)" -m "$(bump current)"
+          git push origin "v$(bump current)"
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.RELEASE_TOKEN }}"
+          automatic_release_tag: "latest"
+          prerelease: false
+          title: "New Release For Service Mesh"
+
+
+
+
+
